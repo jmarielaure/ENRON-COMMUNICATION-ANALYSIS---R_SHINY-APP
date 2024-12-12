@@ -1,0 +1,938 @@
+---
+title: "R markdown_MarieLaureJOVIAL_EnronProject"
+output: html_document
+date: "2024-11-07"
+---
+
+## Loading data and library
+
+```{r message=FALSE, warning=FALSE}
+
+library(ggplot2)
+library(dplyr)
+library(bslib)
+library(lubridate)
+library(ggiraph)
+library(stringr)
+library(tidyr)
+load('C:\\Users\\MarieLaureJovial\\Downloads\\R BIG DATA PROCESSING\\Enron.Rdata')
+```
+
+## Quick pre exploration of the data 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+print(paste(" Number of messages: ", count(message)))
+print(paste(" Number of person in employeelist: ",count(employeelist)))
+print(paste(" Number of recipients: ",count(recipientinfo)))
+```
+Based on the second question in the exam instruction, we have a look at the different existent status and their distribution
+```{r}
+table(employeelist$status)
+
+```
+
+A total of `r count(message)` messages were sent to `r count(recipientinfo)` recipients.   
+
+The company has registered `r count(employeelist)` person under 11 different status.   
+To avoid any confusion with employee status, from now on we will refer to these 149 company employees using the term user.
+
+
+We observe that some messages was sent with recipient directly or in a hidden manner.
+
+```{r}
+recipientinfo%>% group_by(rtype) %>% summarise(ComType = n())
+
+```
+Recipients mostly received messages that were meant for them.  An interesting point might be analyzing if the number of hidden recipient increased during tense period for the company.
+
+
+# OBJECTIVE 1: ANALYZE THE EMAIL SENT BY USERS (USER FOCUSED)
+
+Cleaning and making some transformation to the data 
+
+```{r message=FALSE, warning=FALSE}
+#Replacing the null status in employeelist by N/A
+employeelist$status[is.na(employeelist$status)] <- "N/A"
+
+#Making sure that the date column is explotable for future visuals
+message$date <- as.Date(trimws(ymd(message$date)))
+
+#Adding a fullName column to employeelist
+employeelistFN <- mutate(employeelist, fullName = paste(employeelist$firstName, employeelist$lastName))
+```
+
+
+### RELEVANT QUESTION TO OBJECTIVE 1 
+**-How many messages were sent? how and by who ?**  
+**-Is there a group who is more active than another ?**
+
+
+**Transforming employeelist table :**  
+To answer these questions we must join the employeelistFN table with the message table.   
+Given each employee can have up to 4 email, the join must be performed for each email.
+
+```{r}
+#Join of employeelist table and message table on Email_id
+EmployeelistFN1 <-
+employeelistFN %>%
+select(eid,Email_id,status,fullName)%>%
+inner_join(message, by=c("Email_id"="sender"))
+dim(EmployeelistFN1)
+
+
+```
+```{r}
+#Join of employeelist table and message table on Email2
+EmployeelistFN2 <-
+employeelistFN %>%
+filter(!is.na(Email2) & Email2 !="")%>%
+select(eid,Email2,status,fullName)%>%
+inner_join(message, by=c("Email2"="sender"))
+dim(EmployeelistFN2)
+
+```
+```{r}
+#Join of employeelist table and message table  on Email3
+EmployeelistFN3 <-
+employeelistFN %>%
+filter(!is.na(Email3) & Email3 !="")%>%
+select(eid,Email3,status,fullName)%>%
+inner_join(message, by=c("Email3"="sender"))
+dim(EmployeelistFN3)
+
+```
+```{r}
+#Join of employeelist table and message table  on Email4
+EmployeelistFN4 <-
+employeelistFN %>%
+filter(!is.na(EMail4) & EMail4 !="")%>%
+select(eid,EMail4,status,fullName)%>%
+inner_join(message, by=c("EMail4"="sender"))
+dim(EmployeelistFN4)
+
+```
+```{r}
+#Appending all 4 data
+EmployeeMessageSent <- bind_rows(EmployeelistFN1, EmployeelistFN2, EmployeelistFN3, EmployeelistFN4)
+```
+
+**COMMENT**:      
+`r nrow(EmployeelistFN1)` emails were sent with Email_id and `r nrow(EmployeelistFN3)` emails were sent with Email_3 which makes a **total of `r nrow(EmployeeMessageSent)` emails**.   
+ This also means that only **`r round(nrow(EmployeeMessageSent)/nrow(message)*100,1)`% of the `r nrow(message)` messages were sent by users**.  
+Note that emails were only emitted from Email_id and Email3.  
+
+
+### INVESTIGATING THE NUMBER OF EMAIL SENT BY USER
+
+#### Who are the most active senders ?  
+
+```{r message=FALSE}
+#Calculating the amount of message sent by each user
+MsgByEid <- EmployeeMessageSent %>% group_by(eid, fullName, status) %>% summarise(TotalMessageSent = n()) %>% arrange(desc(TotalMessageSent))
+MsgByEid
+
+#Calculating the amount of message sent by an average user
+MeanofMsgByEid <- round(mean(MsgByEid$TotalMessageSent),0)
+print(paste("In average a user sends ", MeanofMsgByEid, "messages"))
+
+#Visualising the distibution of message sent by user
+boxplot(MsgByEid$TotalMessageSent, horizontal = TRUE)
+title("Message Sent Distribution")
+abline(v=MeanofMsgByEid, lty=3, lwd=2, col="red")
+legend("topright", legend = c('mean'), lty = 3, lwd = 2, col = 'red')
+
+```
+  
+**COMMENT**:   
+The most active sender is the `r MsgByEid$status[1]` `r MsgByEid$fullName[1]` with `r MsgByEid$TotalMessageSent[1]`  emails sent.   
+   The less active sender is the `r MsgByEid$status[149]` `r MsgByEid$fullName[149]` with `r MsgByEid$TotalMessageSent[149]`  email sent.  
+  In average a user sends `r MeanofMsgByEid` emails.
+  
+  Howerver, 50% of the users have sent between `r quantile(MsgByEid$TotalMessageSent, 0.25)` and `r quantile(MsgByEid$TotalMessageSent, 0.75)` messages (Q1-Q3).  
+   The average of message sent being so close to the 3rd quantile and so far from the average shows that some user are sending an extreme amount of messages which is leading to such a difference between the median and the mean.
+   
+
+```{r}
+#Defining if the top active emailers where still there during tense period of the company
+
+library(lubridate)
+EmployeeMessageSent$date <- ymd(EmployeeMessageSent$date)
+LastSent <- EmployeeMessageSent %>% select (fullName,date) %>% group_by(fullName) %>% mutate (LatestEmail= max(date))  %>% distinct(fullName, LatestEmail, .keep_all = FALSE)
+
+TopSender_LatestEmailSent<-merge(MsgByEid,LastSent) %>% arrange(desc(TotalMessageSent))
+head(TopSender_LatestEmailSent,15)
+```   
+
+
+### INVESTIGATING THE POSSIBLE INFLUENCE OF STATUS ON EMAILS SENT.
+
+### Overview by status 
+
+
+```{r}
+#Using the table function to summarize the message sent by status
+table(EmployeeMessageSent$status)
+```
+
+#### Which groups are the most active ?
+
+```{r}
+#Defining the quantity of email sent by status in absolute number and in percentage. 
+
+
+MsgByStatus <- EmployeeMessageSent %>% group_by(status) %>% summarise(TotalSent = n()) %>%arrange(desc(TotalSent))%>% mutate(TotalSentPercentage= round(TotalSent/sum(TotalSent)*100))
+MsgByStatus
+
+#Representing  the repartition in % in a pie chart 
+
+ggplot(data = MsgByStatus, aes(x = '', y = TotalSent, fill = status)) +
+  geom_bar(stat = 'identity', width = 1) +  # Create bars to form a pie
+  geom_text(aes(label = paste0(TotalSentPercentage, '%')), 
+            position = position_stack(vjust = 0.5), color = 'black', size = 4) +  # Add percentage labels
+  coord_polar(theta = 'y') +  # Turn the bar chart into a pie chart
+  theme_void() +  # Remove background
+  scale_fill_brewer(palette = "Paired") +  # Choose a color palette for better readability
+  theme(legend.title = element_blank(),  # Remove legend title for clarity
+        legend.text = element_text(size = 10))+  # Adjust legend text size
+  ggtitle("Distribution of Email Sent ")
+```
+
+**COMMENT:** As Employees, N/A's and Vice President user status are the most common it is with little surprise that, 35% messages were sent by employees,  23% of messages were sent by N/A's (23%) followed by 16% sent by Vice Presidents.
+Indeed out of the 149 users, 41 are Employees, 31 are N/A's and 23 are Vice President (see exploration part)
+
+However we can further investigate if this is the only explanation
+
+
+### Further exploration of status impact with basic statistic concepts.
+
+```{r message=FALSE, warning=FALSE}
+MsgBySender <- EmployeeMessageSent %>% group_by(eid, fullName, status)%>% summarise(TotalSent = n())
+MsgBySender_CEO <- select(filter(MsgBySender, status=="CEO"),status,TotalSent)
+MsgBySender_Director <- select(filter(MsgBySender, status=="Director"),status,TotalSent)
+MsgBySender_Employee <- select(filter(MsgBySender, status=="Employee"),status,TotalSent)
+MsgBySender_IHL <- select(filter(MsgBySender, status=="In House Lawyer"),status,TotalSent)
+MsgBySender_Manager <- select(filter(MsgBySender, status=="Manager"),status,TotalSent)
+MsgBySender_MDirector <- select(filter(MsgBySender, status=="Managing Director"),status,TotalSent)
+MsgBySender_NA <- select(filter(MsgBySender, status=="N/A"),status,TotalSent)
+MsgBySender_President <- select(filter(MsgBySender, status=="President"),status,TotalSent)
+MsgBySender_Trader <- select(filter(MsgBySender, status=="Trader"),status,TotalSent)
+MsgBySender_VicePresident <- select(filter(MsgBySender, status=="Vice President"),status,TotalSent)
+summary(MsgBySender_CEO)
+summary(MsgBySender_Director)
+summary(MsgBySender_Employee)
+summary(MsgBySender_IHL)
+summary(MsgBySender_Manager)
+summary(MsgBySender_MDirector)
+summary(MsgBySender_NA)
+summary(MsgBySender_President)
+summary(MsgBySender_Trader)
+summary(MsgBySender_VicePresident)
+
+
+```
+**COMMENT**: Previously we found out that the average user was sending 710 messages.
+From exploring the distribution of message by status, we learn the following:
+In addition of being the most numerous group, CEO's , N/A's and Employees also sent more messages in averages that the rest of the status which also explain the fact that they the top status sending the most messages 
+
+CEO and Presidents status seems to be the status with the most centered distribution and non excessive outliers ( reasonnable maximum)
+
+For other status, we observe a big dispersion in the data. The means can be way superior to the median ( espcially for Employees, Manahers, Managing Director' and N/A's  ) explain by the presence of many users in these status being more active ( larger gap between Q3 and max)  
+  
+     We can illustrate this comment using a box plot by status
+
+
+```{r}
+#Visualising previous comment with Boxplot by status
+ggplot(data=MsgByEid)+ geom_boxplot(aes(x=factor(status),y=MsgByEid$TotalMessageSent))+
+  ylim(0,6500) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+
+*********
+*********
+*********
+
+
+# OBJECTIVE 2: ANALYZE THE EMAIL RECIPIENTS (USER FOCUSED)
+
+### Overview of the received emails (user AND non-user)
+```{r}
+NB_Recipient <- nrow(recipientinfo)
+NB_UniqueRecipient <- length(unique(recipientinfo$rvalue))
+NB_UniqueMessages <- length(unique(recipientinfo$mid))
+print(paste("Number of recipients:", NB_Recipient))
+print(paste("Number of unique recipients:", NB_UniqueRecipient))
+print(paste("Number of unique messages:", NB_UniqueMessages))
+
+```
+**COMMENT: **  
+Quantity of all recipients/messages received (by user and non user): `r NB_Recipient `.   
+Number of unique recipient (user and non user): `r NB_UniqueRecipient `.    
+Number of unique message received by all (user and non-user): `r NB_UniqueMessages `.   
+
+
+The messages were sent differently to the recipients. It could be directly (TO), or indirectly (CC) or indirectly and hidden (BCC).Below the repartition:   
+```{r}
+RtypeDistrib <- table(recipientinfo$rtype)
+RtypeDistrib
+```
+
+
+### INVESTIGATING EMAILS RECEIVED BY USERS (user only)
+
+As saw previously , the users have several email adresses. To facilitate the research of email received independently of the email address, we built and AllUser_wEmail table.
+
+```{r}
+# DATASET AllUser_wEmail:  a table with the employees and all their email adresses in one unique column (FullName, eid, status, Email). This can facilitate our exploration of the recipient.
+
+EmployeePartID <- employeelistFN %>% select (fullName, eid, status, Email_id) %>% rename(Email=Email_id) %>% mutate(EmailIndex = "Email_id")
+
+EmployeePart2 <- employeelistFN %>% filter(!is.na(Email2) & Email2 !="") %>% select(fullName,eid,status, Email2) %>% rename(Email=Email2) %>% mutate(EmailIndex = "Email2")
+
+EmployeePart3 <- employeelistFN %>% filter(!is.na(Email3) & Email3 !="") %>% select (fullName, eid, status, Email3) %>% rename(Email=Email3)  %>% mutate(EmailIndex = "Email3")
+
+EmployeePart4 <- employeelistFN %>% filter(!is.na(EMail4) & EMail4 !="") %>% select (fullName, eid, status, EMail4) %>% rename(Email=EMail4) %>% mutate(EmailIndex = "EMail4")
+
+AllUser_wEmail <- bind_rows(EmployeePartID, EmployeePart2, EmployeePart3, EmployeePart4)
+head(AllUser_wEmail,5)
+```
+   
+     
+
+       
+### RELEVANT QUESTIONS LINK TO OBJECTIVE 2:  
+
+  **-How many emails did users received ?**  
+  **-Are there user that received no emails at all ?**    
+  **-Which user received the most/ the least email?**  
+  **-Are there emails that were communicated to all the users and what were they about ?**  
+
+```{r}
+#Merging the recipientinfo table with the users
+UserRecipient <- merge(recipientinfo, AllUser_wEmail,by.x = "rvalue", by.y = "Email")
+```
+
+  
+**COMMENT**:  
+The users appeared as recipient `r length(UserRecipient$rid)` times out of the `r length(recipientinfo$rid)` received email meaning `r round(length(UserRecipient$rid)/length(recipientinfo$rid),2)*100`% of the time.
+  
+
+```{r}
+#Table of amount of message received by user
+MsgByUserRecipient<- UserRecipient %>% group_by(eid, fullName, status)%>% summarise(TotalReceived = n(), .groups = "keep")%>% arrange(desc(TotalReceived))
+
+```
+
+  
+  
+**COMMENT**:   
+The user who received the most messages is the `r head(MsgByUserRecipient$status,1)` `r head(MsgByUserRecipient$fullName,1)` with `r head(MsgByUserRecipient$TotalReceived,1)` messages received.
+
+The user who received the less messages is the `r tail(MsgByUserRecipient$status,1)` `r tail(MsgByUserRecipient$fullName,1)` with `r tail(MsgByUserRecipient$TotalReceived,1)` messages received.
+
+50% of the users receive between `r quantile(MsgByEid$MsgByUserRecipient$TotalReceived, 0.25)` and `r quantile(MsgByUserRecipient$TotalReceived, 0.75)` messages.  
+
+
+### How many messages is commonly received ?  
+```{r message=FALSE}
+# Plotting amount of message received by user in a histogramm
+ggplot(data=MsgByUserRecipient)+
+  geom_histogram(aes(x=TotalReceived),fill='lightblue')+
+  ggtitle("Message Received frequency")
+
+# Understanding the distribution of amount of message received by user in a box plot
+boxplot(MsgByUserRecipient$TotalReceived, horizontal = TRUE)
+title("Message Received Distribution")
+abline(v= round(mean(MsgByUserRecipient$TotalReceived),0), lty=3, lwd=2, col="red")
+legend("topright", legend = c('mean'), lty = 3, lwd = 2, col = 'red')
+
+```
+
+```{r}
+
+#Calculating the amount of message sent by an average user
+MeanofMsgByUserRecipient <- round(mean(MsgByUserRecipient$TotalReceived),0)
+print(paste("In average a user receives ", MeanofMsgByUserRecipient, "messages"))
+```
+
+**COMMENT** :  
+Users received between close to O to 9000 messages.   A vast majority of  users received around 15OO messages (1000-2000). However we notice a few users receiving more than 3000 messages up 12 000 messages
+
+The box plot show us indeed a median close 1500 but because of the user receiving between 3000 and 12 000 emails, the mean averages 2500.  
+
+Indeed an average user received `r round(mean(MsgByUserRecipient$TotalReceived),0)` messages.
+
+  
+  
+#### Is there messages that were broadly communicated or communicated to the entire organization ?
+
+```{r}
+
+#Table of the messages that were received by all the organization
+ReceivedByAll <- UserRecipient %>% group_by(mid)%>% summarise(TotalUserRecipient = n()) %>% filter(TotalUserRecipient>=148)
+
+#Messages that were the most received in the organisation
+MidMostReceived <- UserRecipient %>% 
+  group_by(mid)%>% 
+  summarise(TotalUserRecipient = n()) %>% 
+  filter(TotalUserRecipient==max(TotalUserRecipient))
+
+ReceivedByAll
+MidMostReceived
+
+```
+
+**COMMENT**  
+`r length(ReceivedByAll$mid)` messages was received by all user in the company. Indeed , no message appear to have be received by 148 person (149 user - 1sender).    
+The maximum of recipient for a unique message was `r max(MidMostReceived$TotalUserRecipient)` and it was the case for `r length(MidMostReceived$mid)` messages.  
+  
+    
+      
+      
+
+## (suite) OTHER QUESTIONS ADDRESSED RELATED TO OBJECTIVE 2:  
+  
+  **-Is there a status group that receives more emails than others?**  
+  **-Does the communication style varies according to status?**  
+
+```{r message=FALSE}
+#Table of number of message received by user by rtype
+MsgRtypeByUserStatus<- UserRecipient %>% 
+  group_by(status, rtype)%>% 
+  summarise(TotalReceived = n())
+MsgRtypeByUserStatus
+```
+
+**_!:It looks like all messges sent in CC was automatically sent in BCC or inversely_**  
+
+Let's analyze the proportion represented by each type of rtype for every status
+```{r}
+ggplot(MsgRtypeByUserStatus, aes(x = status, y = TotalReceived, fill = rtype)) +
+        geom_bar(stat = "identity") +
+        labs(title = "Messages Received by Status and Type", x = "Status", y = "TotalReceived") +
+        theme_minimal() +
+        scale_fill_brewer(palette = "Greens")+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+**COMMENT :**   Employees were the one that received the most email. But all status received mostly messages directly address to them.   
+However, we can notice that for the status that are C-level(President, CEO, Director), the indirect messages received represent a smaller portion of their total emails compared to other status.   
+This make sens has people higher in organization hierarchy are less involved in the day to day activities and are usually solicitated only when really needed.      
+
+
+### What is the dynamic of messages received vs messages sent by status ?
+
+```{r}
+
+#Preparing the table that will be use to answer the question
+
+#Number message sent by status (in value and percentage) - renaming the table for consistency
+MsgSentByStatus <- MsgByStatus
+
+#Number message rceived by status (in value and percentage)
+MsgReceibedByStatus<- UserRecipient %>% 
+  filter(rtype!="BCC")%>% 
+  group_by(status)%>%
+  summarise(TotalReceived = n())%>%
+  mutate(TotalReceivedPercentage= round(TotalReceived/sum(TotalReceived)*100))
+
+#Number user by status (in value and percentage)
+EmployeeByStatus <- employeelistFN %>%
+  group_by(status)%>%
+  summarise(TotalUser = n())%>%
+  mutate(TotalUserPercentage= round(TotalUser/sum(TotalUser)*100))
+
+
+#Merge of the 3 tables below
+StatusTable <-  MsgSentByStatus %>%
+  inner_join(MsgReceibedByStatus, by = "status") %>%
+  inner_join(EmployeeByStatus, by = "status")
+head(StatusTable,2)
+```
+
+
+```{r}
+
+# Reshape the data to long format
+StatusTable_long2 <- StatusTable %>%
+  pivot_longer(
+    cols = c(TotalReceived, TotalSent),
+    names_to = "Metric",
+    values_to = "Percentage"
+  )
+
+# Create the grouped bar plot with dodged bars
+ggplot(StatusTable_long2, aes(x = factor(status), y = Percentage, fill = Metric)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +  
+  labs(
+    title = "Total Send vs Total Received by Status",
+    x = "Status", 
+    y = "Percentage", 
+    fill = "Metric"
+  ) +
+  theme_minimal()+
+  scale_fill_brewer(palette = "Set2")+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+  
+**COMMENT :**For all status there were more messages received than messages sent.  
+But as certain status are more numerous than other it could be interesting to express the same data taking this information into account.   
+
+Considering that other status are more numerous than other, we decide to express all metrics as a percentage of the total.  
+
+```{r}
+
+# Reshape the data to long format
+StatusTable_long <- StatusTable %>%
+  pivot_longer(
+    cols = c(TotalReceivedPercentage, TotalSentPercentage, TotalUserPercentage),
+    names_to = "Metric",
+    values_to = "Percentage"
+  )
+
+# Create the grouped bar plot with dodged bars
+ggplot(StatusTable_long, aes(x = factor(status), y = Percentage, fill = Metric)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +  # Use position_dodge
+  labs(
+    title = "Part of the total in % by Status for each metric",
+    x = "Status", 
+    y = "Percentage", 
+    fill = "Metric"
+  ) +
+  theme_minimal()+
+  scale_fill_brewer(palette = "Set2")+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+**COMMENT**:  Put under the same scale, the latter plot seems to reinforce our precedent findings.   
+Employees and N/A's, status that might be more involved in day-to-day operation and common/group projects seems to exchange more.  
+Vice President also have a high participation in exchanges but we observe that unlike the two precedent status, The Vice President received more emails than he sends. This could be explain by the more important CC aqnd BCC messages he has been receiving compared to the other upper class status. 
+
+For the trader status, the communication seems limited. They represent close to 9% of the user but only 4% of the messages sent and 7% of the messages received. This could be explain by the company organization, if each trader has his own stock portefolio to manage then few exchanges is needed.
+
+To conclude our objective wa can say that Employee ans N/A's seems to be the group the most actives both in term of sending ans receiving email. 
+This plot shows a hierarchical organization and descending type of communication.
+
+
+
+*********
+*********
+*********
+
+
+# OBJECTIVE 3: ANALYZE ALL EMAILS DYNAMIC OVER TIME AND SENDER - RECIPIENT RELATION   
+### (general focus: user and non-user)  
+
+
+
+### RELEVANT INTERROGATIONS RELATED TO OBJECTIVE 3  
+
+
+**-What was the dates /the periods on which the most emails were exchange?**  
+**-Use of specific email addresses or not overtime or during key periods**   
+**-Message overtime between status A and status B_given the key date events**  
+**-Message overtime between NON(user)/ (NON)user : do user received email outside of their main email address?, how many of the exchanges were between users?**    
+
+   
+**-How many times did the user sent email outside out the organization? Who sends and received the most email to/from non user**  
+**-How many time did the users received email coming from outside the organisation ?**
+**-Are email that goes out of the organization sent mostly from non primary email addresses?**
+
+
+
+
+**GENERAL TABLE**
+
+Building a general table including all recipient, all senders and all messages with their subject and content as previous dataset and tables were user-focused.
+
+```{r}
+#Building a general dataset by merging the 4 original data in the enron Rdata file
+                   
+AllMessage_AllSender <- left_join(message,AllUser_wEmail, by = c("sender" = "Email"))
+
+AllReceivers <- left_join(recipientinfo,AllUser_wEmail, by = c("rvalue" = "Email"))
+
+AllMessage_AllSender_AllReceivers <- full_join(AllMessage_AllSender,AllReceivers, by = c("mid" = "mid")) %>% rename(eid_Emailer = eid.x, fullName_Emailer = fullName.x, status_Emailer = status.x, EmailIndex_Emailer =EmailIndex.x, eid_Recipient = eid.y,fullName_Recipient = fullName.y, status_Recipient = status.y, EmailIndex_Recipient =EmailIndex.y)                         
+
+AllMessage_AllSender_AllReceivers_wContent <- full_join(AllMessage_AllSender_AllReceivers,referenceinfo, by = c("mid" = "mid")) %>% filter(year(date)>=1999 & year(date)<=2002)                      
+```
+
+Transforming the general table by adding column that could help with our analysis.
+
+```{r}
+#Adding a column to indicate if the sender/receiver was a user or not
+#Adding a column to identify the user status involved in an exchange
+#Adding a column to help group data by month date if needed
+
+CompleteDataset <- AllMessage_AllSender_AllReceivers_wContent %>% 
+  mutate(ExchangeCat = case_when(
+    is.na(eid_Emailer) & is.na(eid_Recipient) ~ "NON user - NON user",
+    !is.na(eid_Emailer) & is.na(eid_Recipient) ~ "user - NON user",
+    is.na(eid_Emailer) & !is.na(eid_Recipient) ~ "NON user - user",
+    !is.na(eid_Emailer) & !is.na(eid_Recipient) ~ "user - user"
+  ))%>%
+   mutate(ExchangeStatus = paste(status_Emailer,status_Recipient,sep = "-"))%>%
+   mutate(month_year = floor_date(date, "month"))
+
+```
+
+Column name of the complete dataset
+```{r}
+colnames(CompleteDataset)
+```
+
+
+### STUDYING TREND OF EMAIL OVER TIME  
+
+**Studying trend of email over time by mid**
+```{r}
+# Calculate the number of unique `mid` per date
+trend_message <- CompleteDataset %>%
+  group_by(date) %>%
+  summarize(unique_mids = n_distinct(mid), .groups = 'drop')%>%  # Count unique `mid`
+  arrange(desc(unique_mids))
+
+# Calculate the number of unique `mid` per month-year
+trend_message_byMD <- trend_message %>%
+  mutate(month_year = floor_date(date, "month")) %>%
+  group_by(month_year) %>%  # Group by month_year
+  summarize(total_unique_mids = sum(unique_mids), .groups = 'drop')  %>%
+  arrange(desc(total_unique_mids))
+trend_message_byMD
+
+# Plot the trend of unique message sent per date
+trend_message_plot <- ggplot(data = trend_message_byMD, aes(x = month_year, y = total_unique_mids)) +
+  geom_line(color = "blue", linewidth = 1) +  
+    labs(
+    title = "Trend of Messent Sent Over Time",
+    x = "Date",
+    y = "Number of Unique MID"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)  # Rotate x-axis labels
+  ,
+    plot.margin = margin(t = 20, r = 20, b = 80, l = 20)  # Increase bottom margin
+  )
+
+girafe(code=print(trend_message_plot))
+```
+
+**COMMENT :**   
+
+Based on two previous plots, the top periods when the most email were sent, are the following   **periods of interest**:  
+
+**Oct-Nov 2001: around 54 000 msg - **( coincide with the period of Enron announcing to investor that it was going to post 638 billions of lost and discloses a 1.2bn dollars reduction in shareholder equity - the emergence of the accounting fraud- Enron stock price going from 90 dollars to 12dollars per share )  
+
+**March-April 2001: around 30 000 msg - ** a number of analysts began to dig into the details of Enron’s publicly released financial statements. Beginning of realizing the possible fraud  
+
+**January 2002 around 12 000 msg - **: Andersen admits employees disposed of Enron documents. FBI investigation. 1 month after Enron filling for bankruptcy protection in Dec 2001.   
+
+
+   
+   **Studying trend of email over time by Email adress use to send the email**  
+```{r warning=FALSE}
+# Create a  dataset summarizing by month_year and EmailIndex_Emailer
+EmailIndex_Emailer_trend <- CompleteDataset %>%
+  group_by(month_year, EmailIndex_Emailer) %>%
+  summarize(count = n(), .groups = 'drop') 
+
+# Plot using the summarized data
+ggplot(data = EmailIndex_Emailer_trend, aes(x = month_year, y = count, color = EmailIndex_Emailer, group = EmailIndex_Emailer)) +
+  geom_line(size = 1) +  # Use lines to show trends
+  scale_x_date(
+    date_labels = "%b %Y",  # Format x-axis labels as "Month Year"
+    date_breaks = "2 month", # Break x-axis by every month
+    limits = c(as.Date("2000-01-01"), as.Date("2002-07-31"))  # Set date limits
+  ) +
+  labs(
+    title = "Counts Over Time by EmailIndex_Emailer",
+    x = "Month-Year",
+    y = "Count",
+    color = "EmailIndex_Emailer"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 80, hjust = 1)  # Rotate x-axis labels for readability
+  )
+
+```
+  
+  **COMMENT :**   
+
+Even though the emails sent from all EmailIndex tend to follow the same trend, during  periods of interest ,messages sent by  non registered email addresses (meaning non-users) seems to have surge compared to others
+
+We still see a slight difference around January - February where registered email stay steady when non-registered email increase a bit 
+
+Note: this plot shows that user continue using their primary email address independently of the period.   
+
+
+
+
+  **Studying trend of email over time between NON(user)/ (NON)user**
+
+```{r warning=FALSE}
+
+ExchangeCat_trend <- CompleteDataset %>%
+  group_by(month_year, ExchangeCat) %>%
+  summarize(count = n(), .groups = 'drop') %>%
+  mutate(percent = count / sum(count) * 100)  # Calculate percentages
+
+
+# Plot using the transformed data
+ggplot(data = ExchangeCat_trend, aes(x = month_year, y = percent, fill = ExchangeCat)) +
+  geom_bar(stat = "identity", position = "fill") +  # 100% stacked bar chart
+  scale_x_date(
+    date_labels = "%b %Y",  # Format x-axis labels as "Month Year"
+    date_breaks = "1 month",  # Break x-axis by every month
+    limits = c(as.Date("2000-01-01"), as.Date("2002-05-31"))  # Set date limits
+  ) +
+  labs(
+    title = "100% Stacked Bar Chart of Exchange Categories Over Time",
+    x = "Date",
+    y = "Percentage",
+    fill = "Exchange Category"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 75, hjust = 1),  # Rotate x-axis labels for readability
+    legend.position = "top"  # Position legend at the top
+  )
+```
+  
+ **COMMENT:**   
+ The NON-user to NON-user exchange is consistently the most exchange category represented.   
+User to user exchanges seems to be stable   
+Even almost imperceptible, we can also notice that during the period of interest April 2001, messages coming from outside the registered user being send to user gained proportion      
+As far as user - non User exchanges are concerned, we can especially highlight their presence in April and May 2022. Possible event with link to “The DOJ indicts Arthur Andersen for obstruction of justice. ”   
+
+In April 2002 and May 2002, the proportion of emails sent by user outside of the organization has almost double vs the previous month   
+
+
+
+### Which status interacted the most with non registered user ?
+
+```{r warning=FALSE}
+StatusEmailingOut <- CompleteDataset %>%
+  filter(ExchangeCat=="user - NON user" & EmailIndex_Emailer == "Email_id")%>%
+  group_by (month_year,status_Emailer)%>%
+  summarize(SentTo_NONuser= n(),.groups = "keep")
+StatusEmailingOut
+
+# Plot using the summarized data
+ggplot(data = StatusEmailingOut, aes(x = month_year, y = SentTo_NONuser, color = status_Emailer, group = status_Emailer)) +
+  geom_line(size = 1) +  # Use lines to show trends
+  scale_x_date(
+    date_labels = "%b %Y",  # Format x-axis labels as "Month Year"
+    date_breaks = "2 month", # Break x-axis by every month
+    limits = c(as.Date("2000-01-01"), as.Date("2002-05-31"))  # Set date limits
+  ) +
+  labs(
+    title = "Email sent to non registered users Over Time by status_Emailer",
+    x = "Month-Year",
+    y = "Email Sent to NON-users",
+    color = "Emailer Status"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 80, hjust = 1)  # Rotate x-axis labels for readability
+  )
+
+
+```
+  
+  **COMMENT :**
+The most interaction with non user was by Employee's and N/A's
+However, all status stopped interacting with non user after March 2002
+Only Employees and N/A's seems to have continue their interaction with people outside of the organisation until April 2002.
+  
+  
+  
+  
+```{r message=FALSE, warning=FALSE}
+StatusVSStatusData <- CompleteDataset %>%
+  # Convert month_year to Date if it is not already
+  mutate(month_year = as.Date(month_year, format = "%Y-%m-%d")) %>%  # Adjust the format as needed
+  group_by(month_year, status_Emailer, status_Recipient) %>%
+  filter(
+    status_Emailer %in% c("President", "CEO", "Vice President", "In House Lawyer","N/A","Manager","Employee")  &
+    status_Recipient %in% c("President", "CEO", "Vice President", "In House Lawyer", "N/A","Manager","Employee") &
+    month_year >= as.Date("2001-01-01") &  
+    month_year <= as.Date("2002-06-30")    
+  ) %>%
+  summarise(count = n(), .groups = 'keep')
+
+
+
+ggplot(data=StatusVSStatusData)+
+  geom_point(aes(x = month_year, y=count))+
+  #geom_smooth(aes(x = month_year, y=count),method="lm")+
+  geom_line(aes(x = month_year, y=count))+
+  facet_grid(status_Emailer~status_Recipient)+
+    scale_y_continuous(
+    limits = c(0, 300),  # Set the y-axis limits from 0 to 300
+    expand = c(0, 0)     # Prevent additional space beyond the limits
+  ) +
+  labs(
+    title = "Interaction From Status_Emailer To Status_Recipient Over Time",
+    x = "Month-Year",  # Label for x-axis
+    y = "Count"        # Label for y-axis
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),# Center and bold the title
+    axis.text.x = element_text(angle = 45, hjust = 1) # Rotate x-axis labels by 45 degrees
+  
+  )
+```
+
+**COMMENT: **  
+Possible interaction of interest:  
+-Vice President to CEO in August 2001  
+-Vice President to President in Sept 2001  
+- N/A to Manager between June 2001 and Sept 2001  
+-Manager to Employee between October 2001 and November 2001
+They indeed show a change of dynamic during period previously flagged as "period of interest" 
+
+*****
+*****
+*****
+
+
+# OBJECTIVE 4: ANALYZE EMAILS CONTENT  
+
+
+### QUESTIONS RELATED TO OBJECTIVE 4   
+
+**-Does the exchanges reflects that people were aware about the situation?**   
+**-Were there any information shared about possible layoffs?**   
+**-Content of Messages received or sent by Enron case person of interest if existent: Ken Lay (CEO), Jeff Skilling, Andrew Faston, Andersen Arthur **   
+**-Content of message of "possible interaction of interest**
+
+Adding information to the previous general dataset to help us answer our interrogation for objective 4 part.
+
+```{r word mutation}
+
+WordOfInterest <- "fraud|bankrupcy|layoffs|debt|lawsuit|litigation|resignation" # _Inserting to be research_
+
+ContentCompleteDataset <- CompleteDataset %>%
+  filter(!is.na(reference)) %>%  
+  mutate(
+    word_exist = str_detect(tolower(reference), WordOfInterest), #binary column detecting the existence of the word
+    word_count = str_count(tolower(reference), WordOfInterest), # counting how many times the terms appears
+    word_extract = str_extract(tolower(reference), WordOfInterest) #extracting the first word found
+  ) 
+  
+
+ContentCompleteDataset_TRUE <- ContentCompleteDataset %>%
+  filter(word_exist == TRUE)
+ 
+```
+
+
+#### Estimating a time range for these topics
+```{r}
+#Estimating a time range for these topics
+min(ContentCompleteDataset_TRUE$date)
+min(ContentCompleteDataset_TRUE$date[ContentCompleteDataset_TRUE$word_count>1])
+max(ContentCompleteDataset_TRUE$date)
+```
+
+**COMMENT**: The topic first appear in the exchanges in Sept 1999.   But it became more of a hot topic after May 2000.  The topics were  still mentioned in exchanges in June 2002.
+
+
+```{r warning=FALSE}
+ContentMessage <-CompleteDataset %>% distinct(mid,month_year,subject,reference,fullName_Emailer,status_Emailer,fullName_Recipient,status_Recipient) %>% mutate(word_count = str_count(tolower(reference), WordOfInterest))
+ 
+
+ggplot(ContentMessage, aes(x = month_year, y = word_count, color= status_Emailer)) +
+  geom_point(size = 2) +
+  scale_x_date(
+    date_labels = "%b %Y",  # Format x-axis labels as "Month Year"
+    date_breaks = "3 month", # Break x-axis by every month
+  ) +
+  labs(
+    title = "Occurrences of Keywords Over Time",
+    x = "Date",
+    y = "Keyword Count (tr_count)"
+  ) +
+  theme_minimal()+
+  theme(
+    axis.text.x = element_text(angle = 80, hjust = 1)  # Rotate x-axis labels for readability
+  )
+
+```
+
+
+**COMMENT**: As expected the key words follows the trend of the period of interest and tension at Enron
+
+
+### Determining the status and exchanges were the company's situation was the most discuss.
+```{r}
+ContentCompleteDataset_TRUE %>%
+  filter(word_count>=1) %>%
+  group_by(ExchangeStatus)%>%
+  summarize(NbExchange=n())%>%
+  arrange(desc(NbExchange))
+```
+
+
+**COMMENT:** The topics were mostly at heart of the exchanges involving three status whether they were emailers or recipients :  
+- NAs   
+- Employees     
+- Vice Presidents     
+
+
+#### Distribution of the words of interest in the conversations
+```{r}
+WordPieData <- ContentCompleteDataset_TRUE %>% group_by(word_extract) %>% summarise(WordExtractedCount = n()) %>%arrange(desc(WordExtractedCount))%>% mutate(WordExtractedCountPercentage= round(WordExtractedCount/sum(WordExtractedCount)*100))
+WordPieData
+
+
+# Pie representation of the distribution**
+ggplot(data = WordPieData, aes(x = '', y = WordExtractedCount, fill = word_extract)) +
+  geom_bar(stat = 'identity', width = 1) +  # Create bars to form a pie
+  geom_text(aes(label = paste0(WordExtractedCountPercentage, '%')), 
+            position = position_stack(vjust = 0.5), color = 'black', size = 5) +  # Add percentage labels
+  coord_polar(theta = 'y') +  # Turn the bar chart into a pie chart
+  theme_void() +  # Remove background
+  scale_fill_brewer(palette = "Set3") +  # Choose a color palette for better readability
+  theme(legend.title = element_blank(),  # Remove legend title for clarity
+        legend.text = element_text(size = 10))+  # Adjust legend text size
+  ggtitle("Distribution of Extracted Words")
+
+```
+  
+   **COMMENT : ** Most conversation are related to debt and litigation
+
+
+
+```{r warning=FALSE}
+WordLineTrendData <- ContentCompleteDataset_TRUE %>%
+  select(month_year, word_extract) %>%
+  group_by(month_year, word_extract) %>%
+  mutate(WordExtractedCount = n()) %>%
+  arrange(month_year) %>%
+  distinct(month_year, word_extract, .keep_all = TRUE)
+
+ggplot(WordLineTrendData, aes(x = month_year, y = WordExtractedCount, fill = word_extract)) +
+        geom_bar(stat = "identity") +
+    scale_x_date(
+    date_labels = "%b %Y",  # Format x-axis labels as "Month Year"
+    date_breaks = "3 month", # Break x-axis by every month
+    limits = c(as.Date("2000-01-01"), as.Date("2002-05-31"))  # Set date limits
+  ) +
+        labs(title = "Word of Interest trend over time", x = "Word of interest", y = "Occurence") +
+        theme_minimal() +
+        scale_fill_brewer(palette = "Set3")+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+**COMMENT:** During October 2001 and November 2001, period the most tense for the company, the topic off debts,fraud and lawsuit became predominant. 
+We also observe a rise in resignations and layoff.    
+_As a recall, in Oct-Nov 2001 :" Enron announcing to investor that it was going to post 638 billions of lost and discloses a 1.2bn dollars reduction in shareholder equity - the emergence of the accounting fraud- Enron stock price going from 90 dollars to 12dollars per share"_
+
+The topic of fraud start becoming visible in May-July 2001.   
+_As a recall, " in march - April 2001,  number of analysts began to dig into the details of Enron’s publicly released financial statements. Beginning of realizing the possible fraud"_
+
+
